@@ -27,20 +27,6 @@ st.set_page_config(
 )
 
 # ----------------------------------------
-# Custom Styling
-# ----------------------------------------
-st.markdown("""
-<style>
-.metric-container {
-    padding: 15px;
-    border-radius: 10px;
-    background-color: #f8f9fa;
-    box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ----------------------------------------
 # Header
 # ----------------------------------------
 st.title("📊 Machine Learning Classification Dashboard")
@@ -48,18 +34,19 @@ st.markdown("### Breast Cancer Prediction using Multiple ML Models")
 st.markdown("---")
 
 # ----------------------------------------
-# Load Dataset
+# Load Dataset (Original Structure)
 # ----------------------------------------
 data = load_breast_cancer()
-X = pd.DataFrame(data.data, columns=data.feature_names)
-y = pd.Series(data.target)
+X_full = pd.DataFrame(data.data, columns=data.feature_names)
+y_full = pd.Series(data.target, name="target")
 
+# Train-test split (for default test)
 X_train, X_test_default, y_train, y_test_default = train_test_split(
-    X, y, test_size=0.2, random_state=42
+    X_full, y_full, test_size=0.2, random_state=42
 )
 
 # ----------------------------------------
-# Load Models
+# Load Saved Models
 # ----------------------------------------
 model_dict = {
     "Logistic Regression": joblib.load("model/logistic_reg.pkl"),
@@ -73,28 +60,14 @@ model_dict = {
 scaler = joblib.load("model/scaler.pkl")
 
 # ----------------------------------------
-# Sidebar
+# Sidebar Configuration
 # ----------------------------------------
 st.sidebar.title("⚙️ Configuration")
 
-st.sidebar.subheader("Upload Test Dataset")
-uploaded_file = st.sidebar.file_uploader("Upload CSV file", type=["csv"])
-
-if uploaded_file is not None:
-    test_data = pd.read_csv(uploaded_file)
-
-    if "target" in test_data.columns:
-        y_test = test_data["target"]
-        X_test = test_data.drop("target", axis=1)
-    else:
-        st.sidebar.error("CSV must contain 'target' column.")
-        st.stop()
-else:
-    X_test = X_test_default
-    y_test = y_test_default
-
-# Apply scaling
-X_test = scaler.transform(X_test)
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Test Dataset (CSV)",
+    type=["csv"]
+)
 
 selected_model_name = st.sidebar.selectbox(
     "Select Model",
@@ -104,39 +77,76 @@ selected_model_name = st.sidebar.selectbox(
 model = model_dict[selected_model_name]
 
 # ----------------------------------------
+# Handle Uploaded Dataset Safely
+# ----------------------------------------
+if uploaded_file is not None:
+    test_data = pd.read_csv(uploaded_file)
+
+    if "target" not in test_data.columns:
+        st.sidebar.error("Uploaded CSV must contain a 'target' column.")
+        st.stop()
+
+    y_test = test_data["target"]
+    X_test = test_data.drop("target", axis=1)
+
+    # Ensure correct column order & structure
+    try:
+        X_test = X_test[X_full.columns]
+    except KeyError:
+        st.sidebar.error("Uploaded CSV columns do not match expected dataset features.")
+        st.stop()
+
+else:
+    X_test = X_test_default.copy()
+    y_test = y_test_default.copy()
+
+# ----------------------------------------
+# Apply Scaling
+# ----------------------------------------
+X_test_scaled = scaler.transform(X_test)
+
+# ----------------------------------------
 # Model Description
 # ----------------------------------------
-st.markdown(f"### 🔍 Selected Model: {selected_model_name}")
+st.markdown(f"## 🔍 Selected Model: {selected_model_name}")
 
 model_descriptions = {
-    "Logistic Regression": "A linear model suitable for binary classification problems.",
-    "Decision Tree": "A tree-based model that splits data using decision rules.",
-    "KNN": "Classifies based on the majority class among nearest neighbors.",
-    "Naive Bayes": "Probabilistic classifier based on Bayes theorem.",
-    "Random Forest": "Ensemble of decision trees to improve stability and accuracy.",
-    "XGBoost": "Advanced gradient boosting algorithm with strong performance."
+    "Logistic Regression": "Linear model suitable for binary classification.",
+    "Decision Tree": "Tree-based model using rule-based splits.",
+    "KNN": "Classifies based on nearest neighbors.",
+    "Naive Bayes": "Probabilistic classifier using Bayes theorem.",
+    "Random Forest": "Ensemble of multiple decision trees.",
+    "XGBoost": "Gradient boosting algorithm with strong performance."
 }
 
 st.info(model_descriptions[selected_model_name])
 
 # ----------------------------------------
-# Evaluation
+# Predictions
 # ----------------------------------------
-y_pred = model.predict(X_test)
-y_prob = model.predict_proba(X_test)[:, 1]
+y_pred = model.predict(X_test_scaled)
+
+# Some models may not support predict_proba (safety check)
+if hasattr(model, "predict_proba"):
+    y_prob = model.predict_proba(X_test_scaled)[:, 1]
+    auc = roc_auc_score(y_test, y_prob)
+else:
+    auc = None
 
 accuracy = accuracy_score(y_test, y_pred)
-auc = roc_auc_score(y_test, y_prob)
 precision = precision_score(y_test, y_pred)
 recall = recall_score(y_test, y_pred)
 f1 = f1_score(y_test, y_pred)
 mcc = matthews_corrcoef(y_test, y_pred)
 
+# ----------------------------------------
+# Display Metrics
+# ----------------------------------------
 st.markdown("## 📈 Evaluation Metrics")
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Accuracy", f"{accuracy:.4f}")
-col2.metric("AUC Score", f"{auc:.4f}")
+col2.metric("AUC Score", f"{auc:.4f}" if auc is not None else "N/A")
 col3.metric("Precision", f"{precision:.4f}")
 
 col4, col5, col6 = st.columns(3)
